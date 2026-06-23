@@ -113,3 +113,83 @@ TEST(enumerateHiddenSettings) {
         throw std::runtime_error("SKIP: registry access may require admin");
     }
 }
+
+TEST(createAndDeleteScheme) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    // Get first scheme as source
+    auto schemes = mgr.enumerateSchemes(ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(!schemes.empty());
+
+    // Create a new scheme by duplicating and renaming
+    auto newGuid = mgr.createScheme(schemes[0].guid, "Test_Scheme_AsulPower", ec);
+    ASSERT_FALSE(ec);
+
+    // Verify the new scheme exists
+    auto schemesAfter = mgr.enumerateSchemes(ec);
+    ASSERT_FALSE(ec);
+    bool found = false;
+    for (const auto& s : schemesAfter) {
+        if (s.guid == newGuid) {
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    // Rename the scheme
+    bool renamed = mgr.renameScheme(newGuid, "Test_Scheme_Renamed", ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(renamed);
+
+    // Verify renamed name
+    std::string name = mgr.readFriendlyName(newGuid, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(name == "Test_Scheme_Renamed");
+
+    // Clean up: delete the test scheme
+    bool deleted = mgr.deleteScheme(newGuid, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(deleted);
+
+    // Verify deleted
+    auto schemesFinal = mgr.enumerateSchemes(ec);
+    ASSERT_FALSE(ec);
+    for (const auto& s : schemesFinal) {
+        ASSERT_TRUE(s.guid != newGuid);
+    }
+}
+
+TEST(duplicateScheme) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    auto schemes = mgr.enumerateSchemes(ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(!schemes.empty());
+
+    // Duplicate without renaming
+    auto dupGuid = mgr.duplicateScheme(schemes[0].guid, ec);
+    ASSERT_FALSE(ec);
+
+    // Verify it exists
+    auto name = mgr.readFriendlyName(dupGuid, ec);
+    ASSERT_FALSE(ec);
+
+    // Clean up
+    mgr.deleteScheme(dupGuid, ec);
+}
+
+TEST(deleteScheme_invalidGuid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    // Try to delete a non-existent GUID
+    asul::Guid fakeGuid{0xFFFFFFFF, 0xFFFF, 0xFFFF,
+                        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+    bool result = mgr.deleteScheme(fakeGuid, ec);
+    ASSERT_FALSE(result);
+    ASSERT_TRUE(ec);  // Should have an error
+}

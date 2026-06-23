@@ -62,6 +62,11 @@ power-settings <command> [options]
 | `set ... --ac <val> --dc <val>` | Write AC/DC values |
 | `hidden` | List hidden power settings from registry |
 | `scan` | Full scan: enumerate everything |
+| `create <source-GUID> <name>` | Create a new power scheme from an existing one |
+| `duplicate <GUID>` | Duplicate a power scheme |
+| `delete <GUID>` | Delete a power scheme |
+| `rename <GUID> <new-name>` | Rename a power scheme |
+| `import <file-path>` | Import a power scheme from a .pow file |
 
 ### Examples
 
@@ -109,6 +114,23 @@ mgr.writeACValueIndex(schemeGuid, subgroupGuid, settingGuid, 1800, ec);
 
 // Hidden settings from registry
 auto hidden = mgr.enumerateHiddenSettings(ec);
+
+// Create a new scheme (duplicate "Balanced" and rename)
+auto newGuid = mgr.createScheme(
+    {0x381B4222, 0xF694, 0x41F0, {0x96,0x85,0xFF,0x5B,0xB2,0x60,0xDF,0x1E}},
+    "My Custom Scheme", ec);
+
+// Duplicate a scheme
+auto dupGuid = mgr.duplicateScheme(someGuid, ec);
+
+// Rename a scheme
+mgr.renameScheme(someGuid, "New Name", ec);
+
+// Delete a scheme
+mgr.deleteScheme(someGuid, ec);
+
+// Import a scheme from a .pow file
+auto importedGuid = mgr.importScheme("C:\\backup.pow", ec);
 ```
 
 ### Data Types

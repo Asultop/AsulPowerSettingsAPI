@@ -9,6 +9,10 @@ target_include_directories(AsulPowerSettingsApi
         $<INSTALL_INTERFACE:include>
 )
 
+target_compile_options(AsulPowerSettingsApi PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
 target_link_libraries(AsulPowerSettingsApi
     PRIVATE
         powrprof

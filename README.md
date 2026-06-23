@@ -32,10 +32,10 @@ cmake --build .
 
 构建产物：
 
-| 产物 | 路径 |
-|------|------|
-| SDK 静态库 | `build/lib/AsulPowerSettingsApi.lib` |
-| CLI 可执行文件 | `build/bin/power-settings.exe` |
+| 产物           | 路径                                        |
+| -------------- | ------------------------------------------- |
+| SDK 静态库     | `build/lib/AsulPowerSettingsApi.lib`      |
+| CLI 可执行文件 | `build/bin/power-settings.exe`            |
 | 测试可执行文件 | `build/bin/AsulPowerSettingsApiTests.exe` |
 
 ### 构建选项
@@ -51,17 +51,22 @@ cmake .. -DBUILD_CLI=OFF      # 禁用 CLI
 power-settings <命令> [选项]
 ```
 
-| 命令 | 说明 |
-|------|------|
-| `list` | 列出所有电源方案 |
-| `active` | 显示当前活动电源方案 |
-| `set-active <GUID>` | 切换活动电源方案 |
-| `subgroups <方案-GUID>` | 列出方案下的子组 |
-| `settings <方案-GUID> <子组-GUID>` | 列出子组下的设置项 |
-| `get <方案-GUID> <子组-GUID> <设置-GUID>` | 读取 AC/DC 值 |
-| `set ... --ac <值> --dc <值>` | 写入 AC/DC 值 |
-| `hidden` | 列出注册表中被隐藏的电源设置 |
-| `scan` | 完整扫描：枚举所有方案/子组/设置 |
+| 命令                                        | 说明                             |
+| ------------------------------------------- | -------------------------------- |
+| `list`                                    | 列出所有电源方案                 |
+| `active`                                  | 显示当前活动电源方案             |
+| `set-active <GUID>`                       | 切换活动电源方案                 |
+| `subgroups <方案-GUID>`                   | 列出方案下的子组                 |
+| `settings <方案-GUID> <子组-GUID>`        | 列出子组下的设置项               |
+| `get <方案-GUID> <子组-GUID> <设置-GUID>` | 读取 AC/DC 值                    |
+| `set ... --ac <值> --dc <值>`             | 写入 AC/DC 值                    |
+| `hidden`                                  | 列出注册表中被隐藏的电源设置     |
+| `scan`                                    | 完整扫描：枚举所有方案/子组/设置 |
+| `create <源GUID> <名称>`                  | 基于现有方案创建新的电源方案     |
+| `duplicate <GUID>`                        | 复制电源方案                     |
+| `delete <GUID>`                           | 删除电源方案                     |
+| `rename <GUID> <新名称>`                  | 重命名电源方案                   |
+| `import <文件路径>`                       | 从 .pow 文件导入电源方案         |
 
 ### 使用示例
 
@@ -109,17 +114,34 @@ mgr.writeACValueIndex(schemeGuid, subgroupGuid, settingGuid, 1800, ec);
 
 // 从注册表获取被隐藏的设置
 auto hidden = mgr.enumerateHiddenSettings(ec);
+
+// 创建新方案（基于"平衡"方案复制并重命名）
+auto newGuid = mgr.createScheme(
+    {0x381B4222, 0xF694, 0x41F0, {0x96,0x85,0xFF,0x5B,0xB2,0x60,0xDF,0x1E}},
+    "我的自定义方案", ec);
+
+// 复制方案
+auto dupGuid = mgr.duplicateScheme(someGuid, ec);
+
+// 重命名方案
+mgr.renameScheme(someGuid, "新名称", ec);
+
+// 删除方案
+mgr.deleteScheme(someGuid, ec);
+
+// 从 .pow 文件导入方案
+auto importedGuid = mgr.importScheme("C:\\backup.pow", ec);
 ```
 
 ### 数据类型
 
-| 类型 | 说明 |
-|------|------|
-| `asul::Guid` | GUID 封装，支持 `toString()`、比较运算符 |
-| `asul::PowerScheme` | 电源方案（如"平衡"），包含子组列表 |
-| `asul::PowerSubgroup` | 子组（如"睡眠"），包含设置列表 |
-| `asul::PowerSetting` | 单个设置项，含 GUID、名称、属性、AC/DC 值 |
-| `asul::SettingValue` | 值描述（索引 + 名称） |
+| 类型                    | 说明                                      |
+| ----------------------- | ----------------------------------------- |
+| `asul::Guid`          | GUID 封装，支持`toString()`、比较运算符 |
+| `asul::PowerScheme`   | 电源方案（如"平衡"），包含子组列表        |
+| `asul::PowerSubgroup` | 子组（如"睡眠"），包含设置列表            |
+| `asul::PowerSetting`  | 单个设置项，含 GUID、名称、属性、AC/DC 值 |
+| `asul::SettingValue`  | 值描述（索引 + 名称）                     |
 
 ### 链接方式
 

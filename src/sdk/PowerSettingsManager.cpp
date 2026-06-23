@@ -196,6 +196,95 @@ bool PowerSettingsManager::restoreDefaultScheme(const Guid& /*schemeGuid*/, std:
     return true;
 }
 
+// --- Create / Duplicate / Delete / Rename / Import ---
+
+Guid PowerSettingsManager::createScheme(const Guid& sourceSchemeGuid, const std::string& newName,
+                                        std::error_code& ec) const {
+    // Duplicate source scheme, then rename
+    Guid newGuid = duplicateScheme(sourceSchemeGuid, ec);
+    if (ec) return {};
+
+    if (!renameScheme(newGuid, newName, ec)) {
+        // Cleanup on rename failure
+        std::error_code tmpEc;
+        deleteScheme(newGuid, tmpEc);
+        return {};
+    }
+    return newGuid;
+}
+
+Guid PowerSettingsManager::duplicateScheme(const Guid& sourceSchemeGuid, std::error_code& ec) const {
+    ec.clear();
+    GUID src = toWindowsGuid(sourceSchemeGuid);
+    GUID* destPtr = nullptr;
+    DWORD rc = PowerDuplicateScheme(nullptr, &src, &destPtr);
+    if (rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return {};
+    }
+    Guid result = fromWindowsGuid(*destPtr);
+    LocalFree(destPtr);
+    return result;
+}
+
+bool PowerSettingsManager::deleteScheme(const Guid& schemeGuid, std::error_code& ec) const {
+    ec.clear();
+    GUID g = toWindowsGuid(schemeGuid);
+    DWORD rc = PowerDeleteScheme(nullptr, &g);
+    if (rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return false;
+    }
+    return true;
+}
+
+bool PowerSettingsManager::renameScheme(const Guid& schemeGuid, const std::string& newName,
+                                        std::error_code& ec) const {
+    ec.clear();
+    GUID g = toWindowsGuid(schemeGuid);
+
+    // Convert UTF-8 name to UTF-16
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, newName.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        return false;
+    }
+    std::wstring wname(static_cast<size_t>(wlen) - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, newName.c_str(), -1, &wname[0], wlen);
+
+    DWORD rc = PowerWriteFriendlyName(nullptr, &g, nullptr, nullptr,
+        reinterpret_cast<UCHAR*>(const_cast<wchar_t*>(wname.c_str())),
+        static_cast<DWORD>((wname.size() + 1) * sizeof(wchar_t)));
+    if (rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return false;
+    }
+    return true;
+}
+
+Guid PowerSettingsManager::importScheme(const std::string& filePath, std::error_code& ec) const {
+    ec.clear();
+
+    // Convert UTF-8 path to UTF-16
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, filePath.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        return {};
+    }
+    std::wstring wpath(static_cast<size_t>(wlen) - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, filePath.c_str(), -1, &wpath[0], wlen);
+
+    GUID* destPtr = nullptr;
+    DWORD rc = PowerImportPowerScheme(nullptr, wpath.c_str(), &destPtr);
+    if (rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return {};
+    }
+    Guid result = fromWindowsGuid(*destPtr);
+    LocalFree(destPtr);
+    return result;
+}
+
 // --- Subgroup enumeration ---
 std::vector<PowerSubgroup> PowerSettingsManager::enumerateSubgroups(
     const Guid& schemeGuid, std::error_code& ec) const {

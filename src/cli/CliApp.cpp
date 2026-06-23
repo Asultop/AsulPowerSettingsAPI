@@ -15,6 +15,19 @@
 
 namespace asul {
 
+namespace {
+
+// Parse GUID from UTF-8 string, converting to UTF-16 for CLSIDFromString
+bool parseGuid(const std::string& utf8Str, GUID& outGuid) {
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return false;
+    std::wstring wstr(static_cast<size_t>(wlen) - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, &wstr[0], wlen);
+    return CLSIDFromString(wstr.c_str(), &outGuid) == S_OK;
+}
+
+} // anonymous namespace
+
 CliApp::CliApp() = default;
 
 void CliApp::printVersion(const std::string &argv0) const {
@@ -37,6 +50,11 @@ void CliApp::printUsage(const std::string &argv0) const {
   set <方案-GUID> <子组-GUID> <设置-GUID> --ac <值> --dc <值>  写入值
   hidden                        列出被隐藏的电源设置（来自注册表）
   scan                          完整扫描：枚举所有方案/子组/设置
+  create <源GUID> <名称>        基于现有方案创建新的电源方案
+  duplicate <GUID>              复制电源方案
+  delete <GUID>                 删除电源方案
+  rename <GUID> <新名称>        重命名电源方案
+  import <文件路径>             从 .pow 文件导入电源方案
   help                          显示此帮助信息
   version                       显示版本
 )" << std::endl;
@@ -67,6 +85,11 @@ int CliApp::run(int argc, char* argv[]) {
     if (cmd == "set")         return cmdSet(argc, argv);
     if (cmd == "hidden")      return cmdHidden(argc, argv);
     if (cmd == "scan")        return cmdScan(argc, argv);
+    if (cmd == "create")      return cmdCreate(argc, argv);
+    if (cmd == "duplicate")   return cmdDuplicate(argc, argv);
+    if (cmd == "delete")      return cmdDelete(argc, argv);
+    if (cmd == "rename")      return cmdRename(argc, argv);
+    if (cmd == "import")      return cmdImport(argc, argv);
 
     std::cerr << "未知命令: " << cmd << std::endl;
     printUsage(argv[0]);
@@ -110,8 +133,7 @@ int CliApp::cmdSetActive(int argc, char* argv[]) {
     }
     std::string guidStr = argv[2];
     GUID g;
-    std::wstring wguid(guidStr.begin(), guidStr.end());
-    if (CLSIDFromString(wguid.c_str(), &g) != S_OK) {
+    if (!parseGuid(guidStr, g)) {
         std::cerr << "无效的 GUID: " << guidStr << std::endl;
         return 1;
     }
@@ -134,8 +156,7 @@ int CliApp::cmdSubgroups(int argc, char* argv[]) {
     }
     std::string guidStr = argv[2];
     GUID g;
-    std::wstring wguid(guidStr.begin(), guidStr.end());
-    if (CLSIDFromString(wguid.c_str(), &g) != S_OK) {
+    if (!parseGuid(guidStr, g)) {
         std::cerr << "无效的 GUID: " << guidStr << std::endl;
         return 1;
     }
@@ -165,10 +186,7 @@ int CliApp::cmdSettings(int argc, char* argv[]) {
     std::string subStr = argv[3];
 
     GUID schemeG, subG;
-    std::wstring ws(schemeStr.begin(), schemeStr.end());
-    std::wstring wsub(subStr.begin(), subStr.end());
-    if (CLSIDFromString(ws.c_str(), &schemeG) != S_OK ||
-        CLSIDFromString(wsub.c_str(), &subG) != S_OK) {
+    if (!parseGuid(schemeStr, schemeG) || !parseGuid(subStr, subG)) {
         std::cerr << "无效的 GUID" << std::endl;
         return 1;
     }
@@ -202,12 +220,7 @@ int CliApp::cmdGet(int argc, char* argv[]) {
     std::string setStr = argv[4];
 
     GUID schemeG, subG, setG;
-    std::wstring ws(schemeStr.begin(), schemeStr.end());
-    std::wstring wsub(subStr.begin(), subStr.end());
-    std::wstring wset(setStr.begin(), setStr.end());
-    if (CLSIDFromString(ws.c_str(), &schemeG) != S_OK ||
-        CLSIDFromString(wsub.c_str(), &subG) != S_OK ||
-        CLSIDFromString(wset.c_str(), &setG) != S_OK) {
+    if (!parseGuid(schemeStr, schemeG) || !parseGuid(subStr, subG) || !parseGuid(setStr, setG)) {
         std::cerr << "无效的 GUID" << std::endl;
         return 1;
     }
@@ -249,12 +262,7 @@ int CliApp::cmdSet(int argc, char* argv[]) {
     }
 
     GUID schemeG, subG, setG;
-    std::wstring ws(schemeStr.begin(), schemeStr.end());
-    std::wstring wsub(subStr.begin(), subStr.end());
-    std::wstring wset(setStr.begin(), setStr.end());
-    if (CLSIDFromString(ws.c_str(), &schemeG) != S_OK ||
-        CLSIDFromString(wsub.c_str(), &subG) != S_OK ||
-        CLSIDFromString(wset.c_str(), &setG) != S_OK) {
+    if (!parseGuid(schemeStr, schemeG) || !parseGuid(subStr, subG) || !parseGuid(setStr, setG)) {
         std::cerr << "无效的 GUID" << std::endl;
         return 1;
     }
@@ -334,6 +342,129 @@ int CliApp::cmdScan(int /*argc*/, char* /*argv*/[]) {
     }
     std::cout << "\n扫描完成，共发现 "
               << schemes.size() << " 个电源方案。" << std::endl;
+    return 0;
+}
+
+int CliApp::cmdCreate(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "用法: power-settings create <源方案-GUID> <新方案名称>" << std::endl;
+        return 1;
+    }
+    std::string guidStr = argv[2];
+    std::string name = argv[3];
+
+    GUID g;
+    if (!parseGuid(guidStr, g)) {
+        std::cerr << "无效的 GUID: " << guidStr << std::endl;
+        return 1;
+    }
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    auto newGuid = mgr.createScheme(fromWindowsGuid(g), name, ec);
+    if (ec) {
+        std::cerr << "创建电源方案失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    std::cout << "已创建电源方案 \"" << name << "\"" << std::endl;
+    std::cout << "  GUID: " << newGuid.toString() << std::endl;
+    return 0;
+}
+
+int CliApp::cmdDuplicate(int argc, char* argv[]) {
+    if (argc < 3) {
+        std::cerr << "用法: power-settings duplicate <方案-GUID>" << std::endl;
+        return 1;
+    }
+    std::string guidStr = argv[2];
+
+    GUID g;
+    if (!parseGuid(guidStr, g)) {
+        std::cerr << "无效的 GUID: " << guidStr << std::endl;
+        return 1;
+    }
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    auto newGuid = mgr.duplicateScheme(fromWindowsGuid(g), ec);
+    if (ec) {
+        std::cerr << "复制电源方案失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    std::string name = mgr.readFriendlyName(newGuid, ec);
+    std::cout << "已复制电源方案" << std::endl;
+    std::cout << "  GUID: " << newGuid.toString();
+    if (!name.empty()) std::cout << "  (" << name << ")";
+    std::cout << std::endl;
+    return 0;
+}
+
+int CliApp::cmdDelete(int argc, char* argv[]) {
+    if (argc < 3) {
+        std::cerr << "用法: power-settings delete <方案-GUID>" << std::endl;
+        return 1;
+    }
+    std::string guidStr = argv[2];
+
+    GUID g;
+    if (!parseGuid(guidStr, g)) {
+        std::cerr << "无效的 GUID: " << guidStr << std::endl;
+        return 1;
+    }
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    if (!mgr.deleteScheme(fromWindowsGuid(g), ec)) {
+        std::cerr << "删除电源方案失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    std::cout << "已删除电源方案 " << guidStr << std::endl;
+    return 0;
+}
+
+int CliApp::cmdRename(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "用法: power-settings rename <方案-GUID> <新名称>" << std::endl;
+        return 1;
+    }
+    std::string guidStr = argv[2];
+    std::string newName = argv[3];
+
+    GUID g;
+    if (!parseGuid(guidStr, g)) {
+        std::cerr << "无效的 GUID: " << guidStr << std::endl;
+        return 1;
+    }
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    if (!mgr.renameScheme(fromWindowsGuid(g), newName, ec)) {
+        std::cerr << "重命名电源方案失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    std::cout << "已将电源方案重命名为 \"" << newName << "\"" << std::endl;
+    return 0;
+}
+
+int CliApp::cmdImport(int argc, char* argv[]) {
+    if (argc < 3) {
+        std::cerr << "用法: power-settings import <.pow文件路径>" << std::endl;
+        return 1;
+    }
+    std::string filePath = argv[2];
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    auto guid = mgr.importScheme(filePath, ec);
+    if (ec) {
+        std::cerr << "导入电源方案失败: " << ec.message() << std::endl;
+        return 1;
+    }
+    std::string name = mgr.readFriendlyName(guid, ec);
+    std::cout << "已导入电源方案" << std::endl;
+    std::cout << "  GUID: " << guid.toString();
+    if (!name.empty()) std::cout << "  (" << name << ")";
+    std::cout << std::endl;
     return 0;
 }
 

@@ -23,6 +23,11 @@ private:
     int cmdSet(int argc, char* argv[]);
     int cmdHidden(int argc, char* argv[]);
     int cmdScan(int argc, char* argv[]);
+    int cmdCreate(int argc, char* argv[]);
+    int cmdDuplicate(int argc, char* argv[]);
+    int cmdDelete(int argc, char* argv[]);
+    int cmdRename(int argc, char* argv[]);
+    int cmdImport(int argc, char* argv[]);
 };
 
 } // namespace asul

@@ -31,6 +31,26 @@ public:
     // Restore default power scheme settings
     bool restoreDefaultScheme(const Guid& schemeGuid, std::error_code& ec) const;
 
+    // Create a new power scheme by duplicating an existing one and renaming it
+    // Returns the GUID of the newly created scheme
+    Guid createScheme(const Guid& sourceSchemeGuid, const std::string& newName,
+                      std::error_code& ec) const;
+
+    // Duplicate an existing power scheme (copy as-is)
+    // Returns the GUID of the duplicated scheme
+    Guid duplicateScheme(const Guid& sourceSchemeGuid, std::error_code& ec) const;
+
+    // Delete a power scheme
+    bool deleteScheme(const Guid& schemeGuid, std::error_code& ec) const;
+
+    // Rename a power scheme
+    bool renameScheme(const Guid& schemeGuid, const std::string& newName,
+                      std::error_code& ec) const;
+
+    // Import a power scheme from a .pow file
+    // Returns the GUID of the imported scheme
+    Guid importScheme(const std::string& filePath, std::error_code& ec) const;
+
     // --- Subgroup operations ---
 
     // Enumerate subgroups for a scheme
