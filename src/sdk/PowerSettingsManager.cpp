@@ -8,6 +8,7 @@
 #include <PowrProf.h>
 #include <cstring>
 #include <memory>
+#include <algorithm>
 
 #pragma comment(lib, "powrprof.lib")
 #pragma comment(lib, "advapi32.lib")
@@ -262,6 +263,31 @@ bool PowerSettingsManager::renameScheme(const Guid& schemeGuid, const std::strin
     return true;
 }
 
+bool PowerSettingsManager::writeSchemeDescription(const Guid& schemeGuid,
+                                                   const std::string& description,
+                                                   std::error_code& ec) const {
+    ec.clear();
+    GUID g = toWindowsGuid(schemeGuid);
+
+    // Convert UTF-8 description to UTF-16
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, description.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        return false;
+    }
+    std::wstring wdesc(static_cast<size_t>(wlen) - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, description.c_str(), -1, &wdesc[0], wlen);
+
+    DWORD rc = PowerWriteDescription(nullptr, &g, nullptr, nullptr,
+        reinterpret_cast<UCHAR*>(const_cast<wchar_t*>(wdesc.c_str())),
+        static_cast<DWORD>((wdesc.size() + 1) * sizeof(wchar_t)));
+    if (rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return false;
+    }
+    return true;
+}
+
 Guid PowerSettingsManager::importScheme(const std::string& filePath, std::error_code& ec) const {
     ec.clear();
 
@@ -359,8 +385,12 @@ PowerSetting PowerSettingsManager::getSettingInfo(const Guid& schemeGuid,
         result.dcValueOverride = UINT32_MAX;
     }
 
-    result.acDefault = 0;
-    result.dcDefault = 0;
+    // Read default value indices
+    DWORD acDef = 0, dcDef = 0;
+    PowerReadACDefaultIndex(nullptr, &schemeG, &subG, &setG, &acDef);
+    PowerReadDCDefaultIndex(nullptr, &schemeG, &subG, &setG, &dcDef);
+    result.acDefault = acDef;
+    result.dcDefault = dcDef;
     return result;
 }
 
@@ -427,9 +457,12 @@ std::vector<PowerSetting> PowerSettingsManager::enumerateSettings(
             setting.dcValueOverride = UINT32_MAX;
         }
 
-        // Defaults not available via API; set to 0
-        setting.acDefault = 0;
-        setting.dcDefault = 0;
+        // Read default value indices
+        DWORD acDef = 0, dcDef = 0;
+        PowerReadACDefaultIndex(nullptr, &schemeG, &sgG, &setGuid, &acDef);
+        PowerReadDCDefaultIndex(nullptr, &schemeG, &sgG, &setGuid, &dcDef);
+        setting.acDefault = acDef;
+        setting.dcDefault = dcDef;
 
         settings.push_back(std::move(setting));
     }

@@ -14,6 +14,7 @@ struct Guid {
     uint8_t  data4[8];
 
     std::string toString() const;
+    static Guid fromString(const std::string& str, bool& ok);
     bool operator==(const Guid& rhs) const;
     bool operator!=(const Guid& rhs) const { return !(*this == rhs); }
     bool operator<(const Guid& rhs) const;

@@ -28,6 +28,7 @@ private:
     int cmdDelete(int argc, char* argv[]);
     int cmdRename(int argc, char* argv[]);
     int cmdImport(int argc, char* argv[]);
+    int cmdESportsMode(int argc, char* argv[]);
 };
 
 } // namespace asul

@@ -47,6 +47,10 @@ public:
     bool renameScheme(const Guid& schemeGuid, const std::string& newName,
                       std::error_code& ec) const;
 
+    // Write scheme description (subtitle)
+    bool writeSchemeDescription(const Guid& schemeGuid, const std::string& description,
+                                std::error_code& ec) const;
+
     // Import a power scheme from a .pow file
     // Returns the GUID of the imported scheme
     Guid importScheme(const std::string& filePath, std::error_code& ec) const;
