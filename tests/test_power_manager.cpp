@@ -193,3 +193,86 @@ TEST(deleteScheme_invalidGuid) {
     ASSERT_FALSE(result);
     ASSERT_TRUE(ec);  // Should have an error
 }
+
+TEST(isScheme_valid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    // "Balanced" is always a valid scheme
+    ASSERT_TRUE(mgr.isScheme(asul::PowerSchemeGuids::BALANCED, ec));
+    ASSERT_FALSE(ec);
+}
+
+TEST(isScheme_invalid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    asul::Guid fakeGuid{0xFFFFFFFF, 0xFFFF, 0xFFFF,
+                        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+    ASSERT_FALSE(mgr.isScheme(fakeGuid, ec));
+}
+
+TEST(isSubgroup_valid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    // "Sleep" subgroup under "Balanced" should always exist
+    ASSERT_TRUE(mgr.isSubgroup(asul::PowerSchemeGuids::BALANCED,
+                               asul::PowerSubgroupGuids::SLEEP, ec));
+    ASSERT_FALSE(ec);
+}
+
+TEST(isSubgroup_invalid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    asul::Guid fakeGuid{0xFFFFFFFF, 0xFFFF, 0xFFFF,
+                        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+    ASSERT_FALSE(mgr.isSubgroup(asul::PowerSchemeGuids::BALANCED, fakeGuid, ec));
+}
+
+TEST(isSetting_valid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    // "Sleep after" under "Sleep" under "Balanced" should always exist
+    ASSERT_TRUE(mgr.isSetting(asul::PowerSchemeGuids::BALANCED,
+                              asul::PowerSubgroupGuids::SLEEP,
+                              asul::PowerSettingGuids::SLEEP_AFTER, ec));
+    ASSERT_FALSE(ec);
+}
+
+TEST(isSetting_invalid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    asul::Guid fakeGuid{0xFFFFFFFF, 0xFFFF, 0xFFFF,
+                        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+    ASSERT_FALSE(mgr.isSetting(asul::PowerSchemeGuids::BALANCED,
+                               asul::PowerSubgroupGuids::SLEEP,
+                               fakeGuid, ec));
+}
+
+TEST(getSettingInfo_valid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    auto info = mgr.getSettingInfo(asul::PowerSchemeGuids::BALANCED,
+                                   asul::PowerSubgroupGuids::SLEEP,
+                                   asul::PowerSettingGuids::SLEEP_AFTER, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_FALSE(info.name.empty());
+    ASSERT_TRUE(info.guid == asul::PowerSettingGuids::SLEEP_AFTER);
+}
+
+TEST(getSettingInfo_invalid) {
+    asul::PowerSettingsManager mgr;
+    std::error_code ec;
+
+    asul::Guid fakeGuid{0xFFFFFFFF, 0xFFFF, 0xFFFF,
+                        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+    auto info = mgr.getSettingInfo(asul::PowerSchemeGuids::BALANCED,
+                                   asul::PowerSubgroupGuids::SLEEP,
+                                   fakeGuid, ec);
+    ASSERT_TRUE(ec);  // Should have an error
+}

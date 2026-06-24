@@ -285,6 +285,85 @@ Guid PowerSettingsManager::importScheme(const std::string& filePath, std::error_
     return result;
 }
 
+// --- GUID validation and info ---
+
+bool PowerSettingsManager::isScheme(const Guid& guid, std::error_code& ec) const {
+    ec.clear();
+    std::string name = readFriendlyName(guid, ec);
+    // readFriendlyName succeeds if the GUID is a valid scheme
+    // ec will be set if the GUID doesn't exist
+    return !ec && !name.empty();
+}
+
+bool PowerSettingsManager::isSubgroup(const Guid& schemeGuid, const Guid& subgroupGuid,
+                                      std::error_code& ec) const {
+    ec.clear();
+    GUID schemeG = toWindowsGuid(schemeGuid);
+    GUID subG = toWindowsGuid(subgroupGuid);
+    DWORD size = 0;
+    DWORD rc = PowerReadFriendlyName(nullptr, &schemeG, &subG, nullptr, nullptr, &size);
+    if (rc == ERROR_MORE_DATA || rc == ERROR_SUCCESS) return true;
+    ec = std::error_code(static_cast<int>(rc), std::system_category());
+    return false;
+}
+
+bool PowerSettingsManager::isSetting(const Guid& schemeGuid, const Guid& subgroupGuid,
+                                     const Guid& settingGuid, std::error_code& ec) const {
+    ec.clear();
+    GUID schemeG = toWindowsGuid(schemeGuid);
+    GUID subG = toWindowsGuid(subgroupGuid);
+    GUID setG = toWindowsGuid(settingGuid);
+    DWORD size = 0;
+    DWORD rc = PowerReadFriendlyName(nullptr, &schemeG, &subG, &setG, nullptr, &size);
+    if (rc == ERROR_MORE_DATA || rc == ERROR_SUCCESS) return true;
+    ec = std::error_code(static_cast<int>(rc), std::system_category());
+    return false;
+}
+
+PowerSetting PowerSettingsManager::getSettingInfo(const Guid& schemeGuid,
+                                                   const Guid& subgroupGuid,
+                                                   const Guid& settingGuid,
+                                                   std::error_code& ec) const {
+    ec.clear();
+    PowerSetting result;
+    result.guid = settingGuid;
+
+    // Read name
+    GUID schemeG = toWindowsGuid(schemeGuid);
+    GUID subG = toWindowsGuid(subgroupGuid);
+    GUID setG = toWindowsGuid(settingGuid);
+
+    DWORD size = 0;
+    DWORD rc = PowerReadFriendlyName(nullptr, &schemeG, &subG, &setG, nullptr, &size);
+    if (rc != ERROR_MORE_DATA && rc != ERROR_SUCCESS) {
+        ec = std::error_code(static_cast<int>(rc), std::system_category());
+        return result;
+    }
+    result.name = readName(nullptr, &schemeG, &subG, &setG, ec);
+    if (ec) return result;
+
+    // Read attributes from registry
+    result.attributes = readAttributes(&subG, &setG);
+
+    // Read AC/DC values
+    uint32_t acVal = 0, dcVal = 0;
+    std::error_code tmpEc;
+    if (readACValueIndex(schemeGuid, subgroupGuid, settingGuid, acVal, tmpEc)) {
+        result.acValueOverride = acVal;
+    } else {
+        result.acValueOverride = UINT32_MAX;
+    }
+    if (readDCValueIndex(schemeGuid, subgroupGuid, settingGuid, dcVal, tmpEc)) {
+        result.dcValueOverride = dcVal;
+    } else {
+        result.dcValueOverride = UINT32_MAX;
+    }
+
+    result.acDefault = 0;
+    result.dcDefault = 0;
+    return result;
+}
+
 // --- Subgroup enumeration ---
 std::vector<PowerSubgroup> PowerSettingsManager::enumerateSubgroups(
     const Guid& schemeGuid, std::error_code& ec) const {

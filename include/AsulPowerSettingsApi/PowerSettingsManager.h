@@ -90,6 +90,25 @@ public:
                                                   const Guid& settingGuid,
                                                   std::error_code& ec) const;
 
+    // --- GUID validation and info ---
+
+    // Check if a GUID is a valid power scheme
+    bool isScheme(const Guid& guid, std::error_code& ec) const;
+
+    // Check if a GUID is a valid subgroup under a scheme
+    bool isSubgroup(const Guid& schemeGuid, const Guid& subgroupGuid,
+                    std::error_code& ec) const;
+
+    // Check if a GUID is a valid setting under a scheme+subgroup
+    bool isSetting(const Guid& schemeGuid, const Guid& subgroupGuid,
+                   const Guid& settingGuid, std::error_code& ec) const;
+
+    // Get detailed info for a setting GUID under a specific scheme+subgroup
+    // Returns a PowerSetting with name, attributes, current AC/DC values
+    // If the GUID doesn't exist, ec is set
+    PowerSetting getSettingInfo(const Guid& schemeGuid, const Guid& subgroupGuid,
+                                const Guid& settingGuid, std::error_code& ec) const;
+
     // --- Full scan ---
 
     // Build a complete tree: schemes -> subgroups -> settings (including hidden)
