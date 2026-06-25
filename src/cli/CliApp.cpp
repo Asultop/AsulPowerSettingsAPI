@@ -1,4 +1,4 @@
-﻿#include <cli/CliApp.h>
+#include <cli/CliApp.h>
 #include <AsulPowerSettingsApi/PowerSettingsManager.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <string_view>
 #include <map>
+#include <sstream>
 
 namespace asul {
 
@@ -31,6 +32,47 @@ bool parseGuid(const std::string& utf8Str, GUID& outGuid) {
 
 CliApp::CliApp() = default;
 
+// ---------------------------------------------------------------------------
+// Format parsing
+// ---------------------------------------------------------------------------
+bool CliApp::parseFormat(int& argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--format") == 0 && i + 1 < argc) {
+            std::string val = argv[i + 1];
+            if (val == "json") format_ = OutputFormat::Json;
+            else if (val == "csv") format_ = OutputFormat::Csv;
+            else format_ = OutputFormat::Text;
+            // Remove --format and its value from argv
+            for (int j = i; j + 2 < argc; ++j) argv[j] = argv[j + 2];
+            argc -= 2;
+            return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// JSON helper
+// ---------------------------------------------------------------------------
+std::string CliApp::jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Usage / Version
+// ---------------------------------------------------------------------------
 void CliApp::printVersion(const std::string &argv0) const {
     std::cout << argv0 << " v1.0.0" << std::endl;
     std::cout << "Windows 电源设置管理器 (SDK v1.0.0)" << std::endl;
@@ -56,12 +98,20 @@ void CliApp::printUsage(const std::string &argv0) const {
   delete <GUID>                 删除电源方案
   rename <GUID> <新名称>        重命名电源方案
   import <文件路径>             从 .pow 文件导入电源方案
+  export <GUID> <文件路径>      导出电源方案为 .pow 文件
+  compare <GUID1> <GUID2>       对比两个电源方案的设置差异
   addESportsMode                添加电竞模式电源方案
   help                          显示此帮助信息
   version                       显示版本
+
+选项:
+  --format <text|json|csv>      输出格式（默认 text）
 )" << std::endl;
 }
 
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 int CliApp::run(int argc, char* argv[]) {
     if (argc < 2) {
         printUsage(argv[0]);
@@ -78,6 +128,10 @@ int CliApp::run(int argc, char* argv[]) {
         printVersion(argv[0]);
         return 0;
     }
+
+    // Parse --format globally (skip argv[0] and argv[1]=command)
+    parseFormat(argc, argv);
+
     if (cmd == "list")        return cmdList(argc, argv);
     if (cmd == "active")      return cmdActive(argc, argv);
     if (cmd == "set-active")  return cmdSetActive(argc, argv);
@@ -92,6 +146,8 @@ int CliApp::run(int argc, char* argv[]) {
     if (cmd == "delete")      return cmdDelete(argc, argv);
     if (cmd == "rename")      return cmdRename(argc, argv);
     if (cmd == "import")      return cmdImport(argc, argv);
+    if (cmd == "export")      return cmdExport(argc, argv);
+    if (cmd == "compare")     return cmdCompare(argc, argv);
     if (cmd == "addESportsMode") return cmdESportsMode(argc, argv);
 
     std::cerr << "未知命令: " << cmd << std::endl;
@@ -99,6 +155,9 @@ int CliApp::run(int argc, char* argv[]) {
     return 1;
 }
 
+// ---------------------------------------------------------------------------
+// list
+// ---------------------------------------------------------------------------
 int CliApp::cmdList(int /*argc*/, char* /*argv*/[]) {
     PowerSettingsManager mgr;
     std::error_code ec;
@@ -107,13 +166,34 @@ int CliApp::cmdList(int /*argc*/, char* /*argv*/[]) {
         std::cerr << "枚举电源方案失败: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "电源方案 (" << schemes.size() << " 个):" << std::endl;
-    for (const auto& s : schemes) {
-        std::cout << "  " << s.guid.toString() << "  " << s.name << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "[\n";
+        for (size_t i = 0; i < schemes.size(); ++i) {
+            const auto& s = schemes[i];
+            std::cout << "  {\"guid\": \"" << jsonEscape(s.guid.toString())
+                      << "\", \"name\": \"" << jsonEscape(s.name) << "\"}";
+            if (i + 1 < schemes.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "]" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "guid,name" << std::endl;
+        for (const auto& s : schemes) {
+            std::cout << s.guid.toString() << ",\"" << jsonEscape(s.name) << "\"" << std::endl;
+        }
+    } else {
+        std::cout << "电源方案 (" << schemes.size() << " 个):" << std::endl;
+        for (const auto& s : schemes) {
+            std::cout << "  " << s.guid.toString() << "  " << s.name << std::endl;
+        }
     }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// active
+// ---------------------------------------------------------------------------
 int CliApp::cmdActive(int /*argc*/, char* /*argv*/[]) {
     PowerSettingsManager mgr;
     std::error_code ec;
@@ -123,12 +203,24 @@ int CliApp::cmdActive(int /*argc*/, char* /*argv*/[]) {
         return 1;
     }
     std::string name = mgr.readFriendlyName(guid, ec);
-    std::cout << "当前活动方案: " << guid.toString();
-    if (!name.empty()) std::cout << "  (" << name << ")";
-    std::cout << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"guid\": \"" << jsonEscape(guid.toString())
+                  << "\", \"name\": \"" << jsonEscape(name) << "\"}" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "guid,name" << std::endl;
+        std::cout << guid.toString() << ",\"" << jsonEscape(name) << "\"" << std::endl;
+    } else {
+        std::cout << "当前活动方案: " << guid.toString();
+        if (!name.empty()) std::cout << "  (" << name << ")";
+        std::cout << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// set-active
+// ---------------------------------------------------------------------------
 int CliApp::cmdSetActive(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "用法: power-settings set-active <GUID>" << std::endl;
@@ -148,10 +240,17 @@ int CliApp::cmdSetActive(int argc, char* argv[]) {
         std::cerr << "错误: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "已切换活动方案为 " << schemeGuid.toString() << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"success\": true, \"guid\": \"" << jsonEscape(schemeGuid.toString()) << "\"}" << std::endl;
+    } else {
+        std::cout << "已切换活动方案为 " << schemeGuid.toString() << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// subgroups
+// ---------------------------------------------------------------------------
 int CliApp::cmdSubgroups(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "用法: power-settings subgroups <方案-GUID>" << std::endl;
@@ -172,14 +271,38 @@ int CliApp::cmdSubgroups(int argc, char* argv[]) {
         std::cerr << "错误: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "子组 (" << subgroups.size() << " 个):" << std::endl;
-    for (const auto& sg : subgroups) {
-        std::string hidden = sg.isHidden() ? " [隐藏]" : "";
-        std::cout << "  " << sg.guid.toString() << "  " << sg.name << hidden << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "[\n";
+        for (size_t i = 0; i < subgroups.size(); ++i) {
+            const auto& sg = subgroups[i];
+            std::cout << "  {\"guid\": \"" << jsonEscape(sg.guid.toString())
+                      << "\", \"name\": \"" << jsonEscape(sg.name)
+                      << "\", \"hidden\": " << (sg.isHidden() ? "true" : "false") << "}";
+            if (i + 1 < subgroups.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "]" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "guid,name,hidden" << std::endl;
+        for (const auto& sg : subgroups) {
+            std::cout << sg.guid.toString() << ",\""
+                      << jsonEscape(sg.name) << "\","
+                      << (sg.isHidden() ? "true" : "false") << std::endl;
+        }
+    } else {
+        std::cout << "子组 (" << subgroups.size() << " 个):" << std::endl;
+        for (const auto& sg : subgroups) {
+            std::string hidden = sg.isHidden() ? " [隐藏]" : "";
+            std::cout << "  " << sg.guid.toString() << "  " << sg.name << hidden << std::endl;
+        }
     }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// settings
+// ---------------------------------------------------------------------------
 int CliApp::cmdSettings(int argc, char* argv[]) {
     if (argc < 4) {
         std::cerr << "用法: power-settings settings <方案-GUID> <子组-GUID>" << std::endl;
@@ -202,16 +325,43 @@ int CliApp::cmdSettings(int argc, char* argv[]) {
         std::cerr << "错误: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "设置项 (" << settings.size() << " 个):" << std::endl;
-    for (const auto& s : settings) {
-        std::string hidden = s.isHidden() ? " [隐藏]" : "";
-        std::cout << "  " << s.guid.toString() << "  " << s.name << hidden << std::endl;
-        std::cout << "    AC 默认=" << s.acDefault
-                  << "  DC 默认=" << s.dcDefault << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "[\n";
+        for (size_t i = 0; i < settings.size(); ++i) {
+            const auto& s = settings[i];
+            std::cout << "  {\"guid\": \"" << jsonEscape(s.guid.toString())
+                      << "\", \"name\": \"" << jsonEscape(s.name)
+                      << "\", \"hidden\": " << (s.isHidden() ? "true" : "false")
+                      << ", \"ac_default\": " << s.acDefault
+                      << ", \"dc_default\": " << s.dcDefault << "}";
+            if (i + 1 < settings.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "]" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "guid,name,hidden,ac_default,dc_default" << std::endl;
+        for (const auto& s : settings) {
+            std::cout << s.guid.toString() << ",\""
+                      << jsonEscape(s.name) << "\","
+                      << (s.isHidden() ? "true" : "false") << ","
+                      << s.acDefault << "," << s.dcDefault << std::endl;
+        }
+    } else {
+        std::cout << "设置项 (" << settings.size() << " 个):" << std::endl;
+        for (const auto& s : settings) {
+            std::string hidden = s.isHidden() ? " [隐藏]" : "";
+            std::cout << "  " << s.guid.toString() << "  " << s.name << hidden << std::endl;
+            std::cout << "    AC 默认=" << s.acDefault
+                      << "  DC 默认=" << s.dcDefault << std::endl;
+        }
     }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// get
+// ---------------------------------------------------------------------------
 int CliApp::cmdGet(int argc, char* argv[]) {
     if (argc < 5) {
         std::cerr << "用法: power-settings get <方案-GUID> <子组-GUID> <设置-GUID>"
@@ -238,12 +388,27 @@ int CliApp::cmdGet(int argc, char* argv[]) {
                                       fromWindowsGuid(subG),
                                       fromWindowsGuid(setG), dcVal, ec);
 
-    std::cout << "设置项: " << setStr << std::endl;
-    std::cout << "  AC 值: " << (acOk ? std::to_string(acVal) : "不可用") << std::endl;
-    std::cout << "  DC 值: " << (dcOk ? std::to_string(dcVal) : "不可用") << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"setting\": \"" << jsonEscape(setStr)
+                  << "\", \"ac\": " << (acOk ? std::to_string(acVal) : "null")
+                  << ", \"dc\": " << (dcOk ? std::to_string(dcVal) : "null")
+                  << "}" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "setting,ac,dc" << std::endl;
+        std::cout << setStr << ","
+                  << (acOk ? std::to_string(acVal) : "") << ","
+                  << (dcOk ? std::to_string(dcVal) : "") << std::endl;
+    } else {
+        std::cout << "设置项: " << setStr << std::endl;
+        std::cout << "  AC 值: " << (acOk ? std::to_string(acVal) : "不可用") << std::endl;
+        std::cout << "  DC 值: " << (dcOk ? std::to_string(dcVal) : "不可用") << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// set
+// ---------------------------------------------------------------------------
 int CliApp::cmdSet(int argc, char* argv[]) {
     if (argc < 5) {
         std::cerr << "用法: power-settings set <方案-GUID> <子组-GUID> <设置-GUID>"
@@ -277,29 +442,41 @@ int CliApp::cmdSet(int argc, char* argv[]) {
     auto set = fromWindowsGuid(setG);
 
     int rc = 0;
+    bool acOk = true, dcOk = true;
     if (acVal != UINT32_MAX) {
-        if (!mgr.writeACValueIndex(sg, sub, set, acVal, ec)) {
+        acOk = mgr.writeACValueIndex(sg, sub, set, acVal, ec);
+        if (!acOk) {
             std::cerr << "写入 AC 值失败: " << ec.message() << std::endl;
             rc = 1;
-        } else {
-            std::cout << "AC 值已设置为 " << acVal << std::endl;
         }
     }
     if (dcVal != UINT32_MAX) {
-        if (!mgr.writeDCValueIndex(sg, sub, set, dcVal, ec)) {
+        dcOk = mgr.writeDCValueIndex(sg, sub, set, dcVal, ec);
+        if (!dcOk) {
             std::cerr << "写入 DC 值失败: " << ec.message() << std::endl;
             rc = 1;
-        } else {
-            std::cout << "DC 值已设置为 " << dcVal << std::endl;
         }
     }
     if (acVal == UINT32_MAX && dcVal == UINT32_MAX) {
         std::cerr << "未指定要设置的值，请使用 --ac <值> 和/或 --dc <值>" << std::endl;
         return 1;
     }
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"success\": " << (rc == 0 ? "true" : "false");
+        if (acVal != UINT32_MAX) std::cout << ", \"ac\": " << acVal;
+        if (dcVal != UINT32_MAX) std::cout << ", \"dc\": " << dcVal;
+        std::cout << "}" << std::endl;
+    } else if (rc == 0) {
+        if (acVal != UINT32_MAX) std::cout << "AC 值已设置为 " << acVal << std::endl;
+        if (dcVal != UINT32_MAX) std::cout << "DC 值已设置为 " << dcVal << std::endl;
+    }
     return rc;
 }
 
+// ---------------------------------------------------------------------------
+// hidden
+// ---------------------------------------------------------------------------
 int CliApp::cmdHidden(int /*argc*/, char* /*argv*/[]) {
     PowerSettingsManager mgr;
     std::error_code ec;
@@ -308,46 +485,126 @@ int CliApp::cmdHidden(int /*argc*/, char* /*argv*/[]) {
         std::cerr << "读取注册表失败: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "被隐藏的电源设置 (" << hidden.size() << " 个):" << std::endl;
-    for (const auto& s : hidden) {
-        std::cout << "  " << s.guid.toString() << "  " << s.name << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "[\n";
+        for (size_t i = 0; i < hidden.size(); ++i) {
+            const auto& s = hidden[i];
+            std::cout << "  {\"guid\": \"" << jsonEscape(s.guid.toString())
+                      << "\", \"name\": \"" << jsonEscape(s.name) << "\"}";
+            if (i + 1 < hidden.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "]" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "guid,name" << std::endl;
+        for (const auto& s : hidden) {
+            std::cout << s.guid.toString() << ",\"" << jsonEscape(s.name) << "\"" << std::endl;
+        }
+    } else {
+        std::cout << "被隐藏的电源设置 (" << hidden.size() << " 个):" << std::endl;
+        for (const auto& s : hidden) {
+            std::cout << "  " << s.guid.toString() << "  " << s.name << std::endl;
+        }
     }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// scan
+// ---------------------------------------------------------------------------
 int CliApp::cmdScan(int /*argc*/, char* /*argv*/[]) {
     PowerSettingsManager mgr;
     std::error_code ec;
-    std::cout << "正在执行完整电源设置扫描..." << std::endl;
+    if (format_ == OutputFormat::Text)
+        std::cout << "正在执行完整电源设置扫描..." << std::endl;
+
     auto schemes = mgr.fullScan(ec);
     if (ec) {
         std::cerr << "扫描出错: " << ec.message() << std::endl;
         return 1;
     }
 
-    for (const auto& scheme : schemes) {
-        std::cout << "\n=== 电源方案: " << scheme.name
-                  << " " << scheme.guid.toString() << " ===" << std::endl;
-        for (const auto& subgroup : scheme.subgroups) {
-            std::string sgHidden = subgroup.isHidden() ? " [隐藏]" : "";
-            std::cout << "  [子组] " << subgroup.name
-                      << " " << subgroup.guid.toString() << sgHidden << std::endl;
-            for (const auto& setting : subgroup.settings) {
-                std::string sHidden = setting.isHidden() ? " [隐藏]" : "";
-                std::cout << "    [设置] " << setting.name
-                          << " " << setting.guid.toString() << sHidden << std::endl;
-                std::cout << "      AC=" << setting.acValueOverride
-                          << "  DC=" << setting.dcValueOverride
-                          << "  (默认: AC=" << setting.acDefault
-                          << " DC=" << setting.dcDefault << ")" << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "[\n";
+        for (size_t si = 0; si < schemes.size(); ++si) {
+            const auto& scheme = schemes[si];
+            std::cout << "  {\"guid\": \"" << jsonEscape(scheme.guid.toString())
+                      << "\", \"name\": \"" << jsonEscape(scheme.name)
+                      << "\", \"subgroups\": [\n";
+            for (size_t gi = 0; gi < scheme.subgroups.size(); ++gi) {
+                const auto& sg = scheme.subgroups[gi];
+                std::cout << "    {\"guid\": \"" << jsonEscape(sg.guid.toString())
+                          << "\", \"name\": \"" << jsonEscape(sg.name)
+                          << "\", \"hidden\": " << (sg.isHidden() ? "true" : "false")
+                          << ", \"settings\": [\n";
+                for (size_t ti = 0; ti < sg.settings.size(); ++ti) {
+                    const auto& st = sg.settings[ti];
+                    std::cout << "      {\"guid\": \"" << jsonEscape(st.guid.toString())
+                              << "\", \"name\": \"" << jsonEscape(st.name)
+                              << "\", \"hidden\": " << (st.isHidden() ? "true" : "false")
+                              << ", \"ac\": " << st.acValueOverride
+                              << ", \"dc\": " << st.dcValueOverride
+                              << ", \"ac_default\": " << st.acDefault
+                              << ", \"dc_default\": " << st.dcDefault << "}";
+                    if (ti + 1 < sg.settings.size()) std::cout << ",";
+                    std::cout << "\n";
+                }
+                std::cout << "    ]}";
+                if (gi + 1 < scheme.subgroups.size()) std::cout << ",";
+                std::cout << "\n";
+            }
+            std::cout << "  ]}";
+            if (si + 1 < schemes.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "]" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "scheme_guid,scheme_name,subgroup_guid,subgroup_name,setting_guid,setting_name,ac,dc,ac_default,dc_default" << std::endl;
+        for (const auto& scheme : schemes) {
+            for (const auto& sg : scheme.subgroups) {
+                for (const auto& st : sg.settings) {
+                    std::cout << scheme.guid.toString() << ",\""
+                              << jsonEscape(scheme.name) << "\","
+                              << sg.guid.toString() << ",\""
+                              << jsonEscape(sg.name) << "\","
+                              << st.guid.toString() << ",\""
+                              << jsonEscape(st.name) << "\","
+                              << st.acValueOverride << ","
+                              << st.dcValueOverride << ","
+                              << st.acDefault << ","
+                              << st.dcDefault << std::endl;
+                }
             }
         }
+    } else {
+        for (const auto& scheme : schemes) {
+            std::cout << "\n=== 电源方案: " << scheme.name
+                      << " " << scheme.guid.toString() << " ===" << std::endl;
+            for (const auto& subgroup : scheme.subgroups) {
+                std::string sgHidden = subgroup.isHidden() ? " [隐藏]" : "";
+                std::cout << "  [子组] " << subgroup.name
+                          << " " << subgroup.guid.toString() << sgHidden << std::endl;
+                for (const auto& setting : subgroup.settings) {
+                    std::string sHidden = setting.isHidden() ? " [隐藏]" : "";
+                    std::cout << "    [设置] " << setting.name
+                              << " " << setting.guid.toString() << sHidden << std::endl;
+                    std::cout << "      AC=" << setting.acValueOverride
+                              << "  DC=" << setting.dcValueOverride
+                              << "  (默认: AC=" << setting.acDefault
+                              << " DC=" << setting.dcDefault << ")" << std::endl;
+                }
+            }
+        }
+        std::cout << "\n扫描完成，共发现 "
+                  << schemes.size() << " 个电源方案。" << std::endl;
     }
-    std::cout << "\n扫描完成，共发现 "
-              << schemes.size() << " 个电源方案。" << std::endl;
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// create
+// ---------------------------------------------------------------------------
 int CliApp::cmdCreate(int argc, char* argv[]) {
     if (argc < 4) {
         std::cerr << "用法: power-settings create <源方案-GUID> <新方案名称>" << std::endl;
@@ -369,11 +626,19 @@ int CliApp::cmdCreate(int argc, char* argv[]) {
         std::cerr << "创建电源方案失败: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "已创建电源方案 \"" << name << "\"" << std::endl;
-    std::cout << "  GUID: " << newGuid.toString() << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"guid\": \"" << jsonEscape(newGuid.toString())
+                  << "\", \"name\": \"" << jsonEscape(name) << "\"}" << std::endl;
+    } else {
+        std::cout << "已创建电源方案 \"" << name << "\"" << std::endl;
+        std::cout << "  GUID: " << newGuid.toString() << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// duplicate
+// ---------------------------------------------------------------------------
 int CliApp::cmdDuplicate(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "用法: power-settings duplicate <方案-GUID>" << std::endl;
@@ -395,13 +660,22 @@ int CliApp::cmdDuplicate(int argc, char* argv[]) {
         return 1;
     }
     std::string name = mgr.readFriendlyName(newGuid, ec);
-    std::cout << "已复制电源方案" << std::endl;
-    std::cout << "  GUID: " << newGuid.toString();
-    if (!name.empty()) std::cout << "  (" << name << ")";
-    std::cout << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"guid\": \"" << jsonEscape(newGuid.toString())
+                  << "\", \"name\": \"" << jsonEscape(name) << "\"}" << std::endl;
+    } else {
+        std::cout << "已复制电源方案" << std::endl;
+        std::cout << "  GUID: " << newGuid.toString();
+        if (!name.empty()) std::cout << "  (" << name << ")";
+        std::cout << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
 int CliApp::cmdDelete(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "用法: power-settings delete <方案-GUID>" << std::endl;
@@ -421,10 +695,17 @@ int CliApp::cmdDelete(int argc, char* argv[]) {
         std::cerr << "删除电源方案失败: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "已删除电源方案 " << guidStr << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"success\": true, \"guid\": \"" << jsonEscape(guidStr) << "\"}" << std::endl;
+    } else {
+        std::cout << "已删除电源方案 " << guidStr << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// rename
+// ---------------------------------------------------------------------------
 int CliApp::cmdRename(int argc, char* argv[]) {
     if (argc < 4) {
         std::cerr << "用法: power-settings rename <方案-GUID> <新名称>" << std::endl;
@@ -445,10 +726,18 @@ int CliApp::cmdRename(int argc, char* argv[]) {
         std::cerr << "重命名电源方案失败: " << ec.message() << std::endl;
         return 1;
     }
-    std::cout << "已将电源方案重命名为 \"" << newName << "\"" << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"success\": true, \"guid\": \"" << jsonEscape(guidStr)
+                  << "\", \"name\": \"" << jsonEscape(newName) << "\"}" << std::endl;
+    } else {
+        std::cout << "已将电源方案重命名为 \"" << newName << "\"" << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// import
+// ---------------------------------------------------------------------------
 int CliApp::cmdImport(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "用法: power-settings import <.pow文件路径>" << std::endl;
@@ -464,13 +753,197 @@ int CliApp::cmdImport(int argc, char* argv[]) {
         return 1;
     }
     std::string name = mgr.readFriendlyName(guid, ec);
-    std::cout << "已导入电源方案" << std::endl;
-    std::cout << "  GUID: " << guid.toString();
-    if (!name.empty()) std::cout << "  (" << name << ")";
-    std::cout << std::endl;
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"guid\": \"" << jsonEscape(guid.toString())
+                  << "\", \"name\": \"" << jsonEscape(name) << "\"}" << std::endl;
+    } else {
+        std::cout << "已导入电源方案" << std::endl;
+        std::cout << "  GUID: " << guid.toString();
+        if (!name.empty()) std::cout << "  (" << name << ")";
+        std::cout << std::endl;
+    }
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// export
+// ---------------------------------------------------------------------------
+int CliApp::cmdExport(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "用法: power-settings export <方案-GUID> <.pow文件路径>" << std::endl;
+        return 1;
+    }
+    std::string guidStr = argv[2];
+    std::string filePath = argv[3];
+
+    // Build powercfg /export command: powercfg /export <path> <guid-without-braces>
+    std::string cleanGuid = guidStr;
+    cleanGuid.erase(std::remove(cleanGuid.begin(), cleanGuid.end(), '{'), cleanGuid.end());
+    cleanGuid.erase(std::remove(cleanGuid.begin(), cleanGuid.end(), '}'), cleanGuid.end());
+
+    std::string cmd = "powercfg /export \"" + filePath + "\" " + cleanGuid;
+    int rc = system(cmd.c_str());
+
+    if (rc != 0) {
+        std::cerr << "导出电源方案失败 (错误码: " << rc << ")" << std::endl;
+        if (format_ == OutputFormat::Json) {
+            std::cout << "{\"success\": false, \"error\": \"export failed\"}" << std::endl;
+        }
+        return 1;
+    }
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"success\": true, \"guid\": \"" << jsonEscape(guidStr)
+                  << "\", \"path\": \"" << jsonEscape(filePath) << "\"}" << std::endl;
+    } else {
+        std::cout << "已导出电源方案 " << guidStr << " 到 " << filePath << std::endl;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// compare
+// ---------------------------------------------------------------------------
+int CliApp::cmdCompare(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "用法: power-settings compare <方案1-GUID> <方案2-GUID>" << std::endl;
+        return 1;
+    }
+
+    GUID g1, g2;
+    if (!parseGuid(argv[2], g1) || !parseGuid(argv[3], g2)) {
+        std::cerr << "无效的 GUID" << std::endl;
+        return 1;
+    }
+
+    PowerSettingsManager mgr;
+    std::error_code ec;
+    auto sg1 = fromWindowsGuid(g1);
+    auto sg2 = fromWindowsGuid(g2);
+
+    // Full scan both schemes
+    auto scan1 = mgr.fullScan(ec);
+    if (ec) { std::cerr << "扫描失败: " << ec.message() << std::endl; return 1; }
+    auto scan2 = mgr.fullScan(ec);
+    if (ec) { std::cerr << "扫描失败: " << ec.message() << std::endl; return 1; }
+
+    // Find the two schemes
+    const PowerScheme* scheme1 = nullptr;
+    const PowerScheme* scheme2 = nullptr;
+    for (const auto& s : scan1) { if (s.guid == sg1) scheme1 = &s; }
+    for (const auto& s : scan2) { if (s.guid == sg2) scheme2 = &s; }
+
+    if (!scheme1) {
+        std::cerr << "未找到方案: " << argv[2] << std::endl;
+        return 1;
+    }
+    if (!scheme2) {
+        std::cerr << "未找到方案: " << argv[3] << std::endl;
+        return 1;
+    }
+
+    // Build maps: setting GUID -> {subgroup name, setting name, ac, dc}
+    struct SettingInfo {
+        std::string subgroupName;
+        std::string settingName;
+        uint32_t ac;
+        uint32_t dc;
+    };
+    std::map<std::string, SettingInfo> map1, map2;
+
+    for (const auto& sg : scheme1->subgroups) {
+        for (const auto& st : sg.settings) {
+            map1[st.guid.toString()] = {sg.name, st.name, st.acValueOverride, st.dcValueOverride};
+        }
+    }
+    for (const auto& sg : scheme2->subgroups) {
+        for (const auto& st : sg.settings) {
+            map2[st.guid.toString()] = {sg.name, st.name, st.acValueOverride, st.dcValueOverride};
+        }
+    }
+
+    // Find differences
+    struct Diff {
+        std::string settingGuid;
+        std::string settingName;
+        std::string subgroupName;
+        uint32_t ac1, dc1, ac2, dc2;
+    };
+    std::vector<Diff> diffs;
+
+    for (const auto& kv : map1) {
+        const auto& guid = kv.first;
+        const auto& info1 = kv.second;
+        auto it = map2.find(guid);
+        if (it != map2.end()) {
+            const auto& info2 = it->second;
+            if (info1.ac != info2.ac || info1.dc != info2.dc) {
+                Diff d;
+                d.settingGuid = guid;
+                d.settingName = info1.settingName;
+                d.subgroupName = info1.subgroupName;
+                d.ac1 = info1.ac;
+                d.dc1 = info1.dc;
+                d.ac2 = info2.ac;
+                d.dc2 = info2.dc;
+                diffs.push_back(d);
+            }
+        }
+    }
+
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\n  \"scheme1\": {\"guid\": \"" << jsonEscape(scheme1->guid.toString())
+                  << "\", \"name\": \"" << jsonEscape(scheme1->name) << "\"},\n"
+                  << "  \"scheme2\": {\"guid\": \"" << jsonEscape(scheme2->guid.toString())
+                  << "\", \"name\": \"" << jsonEscape(scheme2->name) << "\"},\n"
+                  << "  \"total_settings_scheme1\": " << map1.size() << ",\n"
+                  << "  \"total_settings_scheme2\": " << map2.size() << ",\n"
+                  << "  \"differences\": " << diffs.size() << ",\n"
+                  << "  \"diffs\": [\n";
+        for (size_t i = 0; i < diffs.size(); ++i) {
+            const auto& d = diffs[i];
+            std::cout << "    {\"guid\": \"" << jsonEscape(d.settingGuid)
+                      << "\", \"name\": \"" << jsonEscape(d.settingName)
+                      << "\", \"subgroup\": \"" << jsonEscape(d.subgroupName)
+                      << "\", \"ac1\": " << d.ac1 << ", \"dc1\": " << d.dc1
+                      << ", \"ac2\": " << d.ac2 << ", \"dc2\": " << d.dc2 << "}";
+            if (i + 1 < diffs.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "  ]\n}" << std::endl;
+    } else if (format_ == OutputFormat::Csv) {
+        std::cout << "setting_guid,setting_name,subgroup,ac_scheme1,dc_scheme1,ac_scheme2,dc_scheme2" << std::endl;
+        for (const auto& d : diffs) {
+            std::cout << d.settingGuid << ",\""
+                      << jsonEscape(d.settingName) << "\",\""
+                      << jsonEscape(d.subgroupName) << "\","
+                      << d.ac1 << "," << d.dc1 << ","
+                      << d.ac2 << "," << d.dc2 << std::endl;
+        }
+    } else {
+        std::cout << "对比: " << scheme1->name << " vs " << scheme2->name << std::endl;
+        std::cout << "  方案1 设置数: " << map1.size() << std::endl;
+        std::cout << "  方案2 设置数: " << map2.size() << std::endl;
+        std::cout << "  差异数: " << diffs.size() << std::endl;
+
+        if (!diffs.empty()) {
+            std::cout << "\n差异项:" << std::endl;
+            for (const auto& d : diffs) {
+                std::cout << "  " << d.settingGuid << "  " << d.settingName << std::endl;
+                std::cout << "    [" << scheme1->name << "] AC=" << d.ac1 << " DC=" << d.dc1 << std::endl;
+                std::cout << "    [" << scheme2->name << "] AC=" << d.ac2 << " DC=" << d.dc2 << std::endl;
+            }
+        } else {
+            std::cout << "\n两个方案的设置完全相同。" << std::endl;
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// addESportsMode
+// ---------------------------------------------------------------------------
 int CliApp::cmdESportsMode(int /*argc*/, char* /*argv*/[]) {
     PowerSettingsManager mgr;
     std::error_code ec;
@@ -578,11 +1051,17 @@ int CliApp::cmdESportsMode(int /*argc*/, char* /*argv*/[]) {
     }
 
     // Summary
-    std::cout << "\n电竞模式方案已创建!" << std::endl;
-    std::cout << "  GUID: " << newGuid.toString() << std::endl;
-    std::cout << "  已应用: " << applied << " 项" << std::endl;
-    if (skipped > 0) {
-        std::cout << "  跳过: " << skipped << " 项 (当前系统不支持或写入失败)" << std::endl;
+    if (format_ == OutputFormat::Json) {
+        std::cout << "{\"guid\": \"" << jsonEscape(newGuid.toString())
+                  << "\", \"name\": \"eSports Mode\", \"applied\": " << applied
+                  << ", \"skipped\": " << skipped << "}" << std::endl;
+    } else {
+        std::cout << "\n电竞模式方案已创建!" << std::endl;
+        std::cout << "  GUID: " << newGuid.toString() << std::endl;
+        std::cout << "  已应用: " << applied << " 项" << std::endl;
+        if (skipped > 0) {
+            std::cout << "  跳过: " << skipped << " 项 (当前系统不支持或写入失败)" << std::endl;
+        }
     }
     return 0;
 }

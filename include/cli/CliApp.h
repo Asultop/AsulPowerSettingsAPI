@@ -2,8 +2,11 @@
 
 #include <string>
 #include <vector>
+#include <iostream>
 
 namespace asul {
+
+enum class OutputFormat { Text, Json, Csv };
 
 class CliApp {
 public:
@@ -11,6 +14,11 @@ public:
     int run(int argc, char* argv[]);
 
 private:
+    OutputFormat format_ = OutputFormat::Text;
+
+    // Parse --format from argv, returns true if found
+    bool parseFormat(int& argc, char* argv[]);
+
     void printUsage(const std::string &argv0) const;
     void printVersion(const std::string &argv0) const;
 
@@ -28,7 +36,12 @@ private:
     int cmdDelete(int argc, char* argv[]);
     int cmdRename(int argc, char* argv[]);
     int cmdImport(int argc, char* argv[]);
+    int cmdExport(int argc, char* argv[]);
+    int cmdCompare(int argc, char* argv[]);
     int cmdESportsMode(int argc, char* argv[]);
+
+    // JSON helpers
+    static std::string jsonEscape(const std::string& s);
 };
 
 } // namespace asul
